@@ -82,6 +82,17 @@
       clone.setAttribute("width", width * scaleFactor);
       clone.setAttribute("height", height * scaleFactor);
       clone.setAttribute("viewBox", "0 0 " + width + " " + height);
+      
+      // LEBL: Traverse through the ancestors of the element, stopping before the body, and append the class
+      var curr = el;
+      while (curr = curr.parentElement) {
+        if (curr.tagName == "body") break;
+        // classList might have to be polyfilled in certain browsers (http://stackoverflow.com/a/14101453) 
+        for (var i = 0; i < curr.classList.length; i++) {
+          clone.classList.add(curr.classList[i]);
+        }
+      }
+      
       outer.appendChild(clone);
 
       clone.insertBefore(styles(clone), clone.firstChild);
@@ -110,6 +121,7 @@
         a.href = canvas.toDataURL('image/png');
         document.body.appendChild(a);
         a.click();
+        document.body.removeChild(a); // LEBL: remove superfluous elements
       }
     });
   }
