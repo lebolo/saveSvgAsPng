@@ -3,24 +3,30 @@
 
   var doctype = '<?xml version="1.0" standalone="no"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">';
 
-  function inlineImages(callback) {
-    var images = document.querySelectorAll('svg image');
+  function isExternal(url) {
+    return url && url.lastIndexOf('http',0) == 0 && url.lastIndexOf(window.location.host) == -1;
+  }
+
+  function inlineImages(el, callback) {
+    var images = el.querySelectorAll('image');
     var left = images.length;
     if (left == 0) {
       callback();
     }
     for (var i = 0; i < images.length; i++) {
       (function(image) {
-        if (image.getAttribute('xlink:href')) {
-          var href = image.getAttribute('xlink:href').value;
-          if (/^http/.test(href) && !(new RegExp('^' + window.location.host).test(href))) {
-            throw new Error("Cannot render embedded images linking to external hosts.");
+        var href = image.getAttribute('xlink:href');
+        if (href) {
+          if (isExternal(href.value)) {
+            console.warn("Cannot render embedded images linking to external hosts: "+href.value);
+            return;
           }
         }
         var canvas = document.createElement('canvas');
         var ctx = canvas.getContext('2d');
         var img = new Image();
-        img.src = image.getAttribute('xlink:href');
+        href = href || image.getAttribute('href');
+        img.src = href;
         img.onload = function() {
           canvas.width = img.width;
           canvas.height = img.height;
@@ -31,36 +37,47 @@
             callback();
           }
         }
+        img.onerror = function() {
+          console.log("Could not load "+href);
+          left--;
+          if (left == 0) {
+            callback();
+          }
+        }
       })(images[i]);
     }
   }
 
-  function styles(dom) {
+  function styles(el, selectorRemap) {
     var css = "";
     var sheets = document.styleSheets;
     for (var i = 0; i < sheets.length; i++) {
+      if (isExternal(sheets[i].href)) {
+        console.warn("Cannot include styles from other hosts: "+sheets[i].href);
+        continue;
+      }
       var rules = sheets[i].cssRules;
-      for (var j = 0; j < rules.length; j++) {
-        var rule = rules[j];
-        if (typeof(rule.style) != "undefined") {
-          css += rule.selectorText + " { " + rule.style.cssText + " }\n";
+      if (rules != null) {
+        for (var j = 0; j < rules.length; j++) {
+          var rule = rules[j];
+          if (typeof(rule.style) != "undefined") {
+            var matches = el.querySelectorAll(rule.selectorText);
+            if (matches.length > 0) {
+              var selector = selectorRemap ? selectorRemap(rule.selectorText) : rule.selectorText;
+              css += selector + " { " + rule.style.cssText + " }\n";
+            }
+          }
         }
       }
     }
-
-    var s = document.createElement('style');
-    s.setAttribute('type', 'text/css');
-    s.innerHTML = "<![CDATA[\n" + css + "\n]]>";
-
-    var defs = document.createElement('defs');
-    defs.appendChild(s);
-    return defs;
+    return css;
   }
 
-  out$.svgAsDataUri = function(el, scaleFactor, cb) {
-    scaleFactor = scaleFactor || 1;
+  out$.svgAsDataUri = function(el, options, cb) {
+    options = options || {};
+    options.scale = options.scale || 1;
 
-    inlineImages(function() {
+    inlineImages(el, function() {
       var outer = document.createElement("div");
       var clone = el.cloneNode(true);
       var width = parseInt(
@@ -79,8 +96,8 @@
       clone.setAttribute("version", "1.1");
       clone.setAttributeNS(xmlns, "xmlns", "http://www.w3.org/2000/svg");
       clone.setAttributeNS(xmlns, "xmlns:xlink", "http://www.w3.org/1999/xlink");
-      clone.setAttribute("width", width * scaleFactor);
-      clone.setAttribute("height", height * scaleFactor);
+      clone.setAttribute("width", width * options.scale);
+      clone.setAttribute("height", height * options.scale);
       clone.setAttribute("viewBox", "0 0 " + width + " " + height);
       
       // LEBL: Traverse through the ancestors of the element, stopping before the body, and append the class
@@ -95,7 +112,13 @@
       
       outer.appendChild(clone);
 
-      clone.insertBefore(styles(clone), clone.firstChild);
+      var css = styles(el, options.selectorRemap);
+      var s = document.createElement('style');
+      s.setAttribute('type', 'text/css');
+      s.innerHTML = "<![CDATA[\n" + css + "\n]]>";
+      var defs = document.createElement('defs');
+      defs.appendChild(s);
+      clone.insertBefore(defs, clone.firstChild);
 
       var svg = doctype + outer.innerHTML;
       var uri = 'data:image/svg+xml;base64,' + window.btoa(unescape(encodeURIComponent(svg)));
@@ -105,8 +128,9 @@
     });
   }
 
-  out$.saveSvgAsPng = function(el, name, scaleFactor) {
-    out$.svgAsDataUri(el, scaleFactor, function(uri) {
+  out$.saveSvgAsPng = function(el, name, options) {
+    options = options || {};
+    out$.svgAsDataUri(el, options, function(uri) {
       var image = new Image();
       image.src = uri;
       image.onload = function() {
